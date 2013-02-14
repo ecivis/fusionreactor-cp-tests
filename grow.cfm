@@ -24,28 +24,67 @@
 	</cfif>
 
 	<cfset ls.nl = chr(10)/>
+	<cfset ls.ticks = getTickCount()/>
 	<cfset ls.victor = createObject("java", "java.util.Vector")/>
 	<cfset ls.byteClass = createObject("java", "java.lang.Byte").TYPE/>
 	<cfset ls.runtime = createObject("java", "java.lang.Runtime").getRuntime()/>
 	<cfset ls.maxMem = ls.runtime.maxMemory()/>
 
+	<cfset ls.watchdog = structNew()/>
+	<cfset ls.watchdog.limits = structNew()/>
+	<cfset ls.watchdog.limits.exceptions = 3/>
+	<cfset ls.watchdog.limits.noops = 5/>
+	<cfset ls.watchdog.triggered = ""/>
+	<cfset ls.watchdog.caught = 0/>
+	<cfset ls.watchdog.over = 0/>
+
 	<cfcontent type="text/plain" reset="true"/>
 	<cfsetting enablecfoutputonly="true"/>
 </cfsilent>
 <cfloop condition="true">
-	<cfset ls.free = 100 * ls.runtime.freeMemory() / ls.maxMem/>
-	<cfoutput>#numberFormat(ls.free, "0.00")#%#ls.nl#</cfoutput>
+	<cfset ls.freeMem = ls.runtime.freeMemory()/>
+	<cfset ls.percentFree = 100 * ls.freeMem / ls.maxMem/>
+	<cfoutput>#numberFormat(ls.percentFree, "0.00")#%#ls.nl#</cfoutput>
 	<cfflush/>
-	<cfif ls.free lte ls.limit>
+	<cfif ls.percentFree lte ls.limit>
 		<cfbreak/>
 	</cfif>
 
-	<cfset ls.bytes = createObject("java","java.lang.reflect.Array").newInstance(ls.byteClass, ls.step * 1048576)/>
-	<cfset ls.victor.add(ls.bytes)/>
+	<!--- Would the next step push us over the edge? --->
+	<cfset ls.nextStep = ls.step * 1048576/>
+	<cfif ls.nextStep gte ls.freeMem>
+		<cfset ls.nextStep = ls.freeMem/>
+		<cfset ls.watchdog.over = ls.watchdog.over + 1/>
+	</cfif>
+
+	<cftry>
+		<cfset ls.bytes = createObject("java","java.lang.reflect.Array").newInstance(ls.byteClass, ls.nextStep)/>
+		<cfset ls.victor.add(ls.bytes)/>
+		<cfcatch>
+			<cfset ls.watchdog.caught = ls.watchdog.caught + 1/>
+			<cfset ls.watchdog.message = cfcatch.message/>
+		</cfcatch>
+	</cftry>
+
 	<cfif ls.delay>
 		<cfset sleep(ls.delay)/>
+	</cfif>
+
+	<cfif ls.watchdog.caught gt ls.watchdog.limits.exceptions>
+		<cfset ls.watchdog.triggered = "caught"/>
+		<cfbreak/>
+	<cfelseif ls.watchdog.over gt ls.watchdog.limits.noops>
+		<cfset ls.watchdog.triggered = "over"/>
+		<cfbreak/>
 	</cfif>
 </cfloop>
 <cfif ls.refractory>
 	<cfset sleep(ls.refractory * 1000)/>
 </cfif>
+<cfif ls.watchdog.triggered eq "caught">
+	<cfoutput>Warning: Watchdog abort was triggered after #ls.watchdog.limits.exceptions# exceptions.#ls.nl#</cfoutput>
+	<cfoutput>#ls.watchdog.message##ls.nl#</cfoutput>
+<cfelseif ls.watchdog.triggered eq "over">
+	<cfoutput>Warning: Watchdog abort was triggered after #ls.watchdog.limits.noops# step size reductions.#ls.nl#</cfoutput>
+</cfif>
+<cfoutput>Completed in #(getTickCount() - ls.ticks)# ms</cfoutput>
